@@ -25,19 +25,24 @@ type MongoConnectDetails struct {
 	Port       int    `json:"port"`
 	AuthSource string `json:"authSource"`
 	App        string `json:"app"`
+	uri        url.URL
+	client     *mongo.Client
+	ctx        context.Context
+	cancel     context.CancelFunc
+	collection *mongo.Collection
 }
 
 // Connect function to mongo that accepts MongoConnectDetails struct
-func Connect(mongoConnectDetails *MongoConnectDetails) (*mongo.Client, error) {
+func (mongoConnectDetails *MongoConnectDetails) Connect() error {
 	/*
 	   Connect to my mongo
 	*/
 	// mongodb://mongodb0.example.com:27017
 	// mongodb://myDBReader:D1fficultP%40ssw0rd@mongodb0.example.com:27017/?authSource=admin
-
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	var err error
+	mongoConnectDetails.ctx, mongoConnectDetails.cancel = context.WithTimeout(context.Background(), 20*time.Second)
 	// use defer for the cancel
-	defer cancel()
+	defer mongoConnectDetails.cancel()
 	hostWithPort := strings.Join(
 		[]string{
 			mongoConnectDetails.Host,
@@ -47,7 +52,7 @@ func Connect(mongoConnectDetails *MongoConnectDetails) (*mongo.Client, error) {
 	queryValues := url.Values{}
 	queryValues.Set("authSource", mongoConnectDetails.AuthSource)
 
-	mongodbURI := url.URL{
+	mongoConnectDetails.uri = url.URL{
 		Scheme:   "mongodb",
 		Host:     hostWithPort,
 		User:     mongodbUser,
@@ -55,56 +60,58 @@ func Connect(mongoConnectDetails *MongoConnectDetails) (*mongo.Client, error) {
 		Path:     mongoConnectDetails.App,
 	}
 
-	clientOptions := options.Client().ApplyURI(mongodbURI.String())
+	clientOptions := options.Client().ApplyURI(mongoConnectDetails.uri.String())
 
-	mongoClient, err := mongo.Connect(ctx, clientOptions)
+	mongoConnectDetails.client, err = mongo.Connect(mongoConnectDetails.ctx, clientOptions)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// test connection
-	err = mongoClient.Ping(ctx, readpref.Primary())
+	err = mongoConnectDetails.client.Ping(mongoConnectDetails.ctx, readpref.Primary())
 	if err != nil {
 		log.Fatal("Error with pinging db :: try whitelisting current IP address within clust config ", err)
-		Disconnect()
+		mongoConnectDetails.Disconnect()
+		return err
 	}
 	fmt.Println("Backend wired to " + mongoConnectDetails.App + " DB...")
-	/*
-	   List databases
-	*/
-	databases, err := mongoClient.ListDatabaseNames(ctx, bson.M{})
-	if err != nil {
-		return nil, err
-	}
-	fmt.Println("Current Mongo Databases: ", databases)
 
-	return mongoClient, nil
+	return nil
 }
 
-func Disconnect() error {
+func (mongoConnectDetails *MongoConnectDetails) Disconnect() error {
 	err := mongoClient.Disconnect(context.TODO())
 
 	if err != nil {
 		return err
 	}
-	fmt.Println("Connection to MongoDB closed.")
+	fmt.Println("Connection to database closed.")
 	return nil
 }
 
-func AssignCollection(mongoClient *mongo.Client, dbName string, collectionName string) *mongo.Collection {
-	return mongoClient.Database(dbName).Collection(collectionName)
+func (mongoConnectDetails *MongoConnectDetails) AssignCollection(dbName string, collectionName string) {
+	mongoConnectDetails.collection = mongoConnectDetails.client.Database(dbName).Collection(collectionName)
+}
+
+// ListDatabases returns database list
+func (mongoConnectDetails *MongoConnectDetails) ListDatabases() ([]string, error) {
+	databases, err := mongoConnectDetails.client.ListDatabaseNames(mongoConnectDetails.ctx, bson.M{})
+	if err != nil {
+		return nil, err
+	}
+	return databases, nil
 }
 
 // GetDocument will retrieve a single experience post by its uuid
-func GetDocument(collection *mongo.Collection, documnetID string, model *interface{}) (*interface{}, error) {
+func (mongoConnectDetails *MongoConnectDetails) GetDocument(documnetID string, model *interface{}) (*interface{}, error) {
 	// create context for db
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
+	mongoConnectDetails.ctx, mongoConnectDetails.cancel = context.WithTimeout(context.Background(), 20*time.Second)
+	defer mongoConnectDetails.cancel()
 
 	// mongodb find params
 	findOptions := options.FindOne()
 	filterInterface := bson.M{"uuid": documnetID}
-	err := collection.FindOne(ctx, filterInterface, findOptions).Decode(&model)
+	err := mongoConnectDetails.collection.FindOne(mongoConnectDetails.ctx, filterInterface, findOptions).Decode(&model)
 	if err != nil {
 		return nil, err
 	}
@@ -113,15 +120,14 @@ func GetDocument(collection *mongo.Collection, documnetID string, model *interfa
 }
 
 // CreateDocument
-func CreateDocument(collection *mongo.Collection, document *interface{}) (interface{}, error) {
+func (mongoConnectDetails *MongoConnectDetails) CreateDocument(document *interface{}) (interface{}, error) {
 	// create context for db insert
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
+	mongoConnectDetails.ctx, mongoConnectDetails.cancel = context.WithTimeout(context.Background(), 20*time.Second)
+	defer mongoConnectDetails.cancel()
 
-	result, err := collection.InsertOne(ctx, document)
+	result, err := mongoConnectDetails.collection.InsertOne(mongoConnectDetails.ctx, document)
 	if err != nil {
-		fmt.Println("error inserting document into database :: ", err)
-		return "", err
+		return nil, err
 	}
 
 	return result.InsertedID, nil
