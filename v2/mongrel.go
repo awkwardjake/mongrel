@@ -53,7 +53,7 @@ func (mongoConnectDetails *MongoConnectDetails) Connect(requestContext context.C
 
 	credentials := options.Credential{
 		AuthMechanism: "SCRAM-SHA-256",
-		AuthSource:    mongoConnectDetails.App,
+		AuthSource:    mongoConnectDetails.AuthSource,
 		Username:      mongoConnectDetails.Username,
 		Password:      mongoConnectDetails.Password,
 	}
