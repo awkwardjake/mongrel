@@ -5,7 +5,7 @@
 ## Install
 
 ```text
-go get github.com/awkwardjake/mongrel
+go get github.com/awkwardjake/mongrel/v2
 ```
 
 ## Docker Compose example
